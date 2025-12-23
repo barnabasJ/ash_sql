@@ -315,7 +315,7 @@ defmodule AshSql.Sort do
                 :error ->
                   aggregate = Ash.Resource.Info.aggregate(resource, sort)
 
-                  {binding, sort} =
+                  {binding, sort_field} =
                     if aggregate &&
                          AshSql.Aggregate.optimizable_first_aggregate?(resource, aggregate, query) do
                       {AshSql.Join.get_binding(
@@ -331,7 +331,34 @@ defmodule AshSql.Sort do
                       {binding, sort}
                     end
 
-                  Ecto.Query.dynamic(field(as(^binding), ^sort))
+                  # Check if this is an attribute with a type callback (e.g., postgres_reference_expr)
+                  attribute = Ash.Resource.Info.attribute(resource, sort_field)
+
+                  if attribute do
+                    # Use dynamic_expr to invoke type callbacks for proper SQL generation
+                    ref = %Ash.Query.Ref{
+                      attribute: attribute,
+                      resource: resource,
+                      relationship_path: relationship_path
+                    }
+
+                    bindings = query.__ash_bindings__
+
+                    type =
+                      AshSql.Expr.parameterized_type(
+                        bindings.sql_behaviour,
+                        attribute.type,
+                        attribute.constraints,
+                        :sort
+                      )
+
+                    {expr, _acc} =
+                      AshSql.Expr.dynamic_expr(query, ref, bindings, false, type)
+
+                    expr
+                  else
+                    Ecto.Query.dynamic(field(as(^binding), ^sort_field))
+                  end
               end
 
             {:cont, {:ok, query_expr ++ [{order, expr}], query}}
