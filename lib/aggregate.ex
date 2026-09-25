@@ -1532,6 +1532,12 @@ defmodule AshSql.Aggregate do
                 context: aggregate.context
               )
 
+            {:ok, expression} =
+              Ash.Filter.hydrate_refs(expression, %{
+                resource: Ash.Resource.Info.related(related, relationship_path),
+                public?: false
+              })
+
             expression =
               if Enum.empty?(relationship_path) do
                 expression
@@ -1541,12 +1547,6 @@ defmodule AshSql.Aggregate do
                   relationship_path
                 )
               end
-
-            {:ok, expression} =
-              Ash.Filter.hydrate_refs(expression, %{
-                resource: agg_query.__ash_bindings__.resource,
-                public?: false
-              })
 
             {:ok, agg_query} =
               AshSql.Calculation.add_calculations(
@@ -1575,6 +1575,12 @@ defmodule AshSql.Aggregate do
                 context: context.source_context
               )
 
+            {:ok, expression} =
+              Ash.Filter.hydrate_refs(expression, %{
+                resource: Ash.Resource.Info.related(related, relationship_path),
+                public?: false
+              })
+
             expression =
               if Enum.empty?(relationship_path) do
                 expression
@@ -1584,12 +1590,6 @@ defmodule AshSql.Aggregate do
                   relationship_path
                 )
               end
-
-            {:ok, expression} =
-              Ash.Filter.hydrate_refs(expression, %{
-                resource: agg_query.__ash_bindings__.resource,
-                public?: false
-              })
 
             {:ok, agg_query} =
               AshSql.Calculation.add_calculations(
