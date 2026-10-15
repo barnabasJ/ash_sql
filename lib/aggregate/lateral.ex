@@ -609,15 +609,7 @@ defmodule AshSql.Aggregate.Lateral do
 
     inner =
       from(row in subquery,
-        where:
-          field(
-            parent_as(^source_binding),
-            ^rel.source_attribute
-          ) ==
-            field(
-              as(^base_binding),
-              ^rel.destination_attribute
-            )
+        where: ^correlation(subquery, rel, source_binding, base_binding)
       )
 
     inner =
@@ -679,15 +671,7 @@ defmodule AshSql.Aggregate.Lateral do
 
     inner =
       from(row in subquery,
-        where:
-          field(
-            parent_as(^source_binding),
-            ^rel.source_attribute
-          ) ==
-            field(
-              as(^base_binding),
-              ^rel.destination_attribute
-            )
+        where: ^correlation(subquery, rel, source_binding, base_binding)
       )
 
     {:ok, inner} =
@@ -801,17 +785,37 @@ defmodule AshSql.Aggregate.Lateral do
       )
 
     field = rel.source_attribute_on_join_resource
+    through_binding = query.__ash_bindings__.current
+    sql_behaviour = query.__ash_bindings__.sql_behaviour
+
+    through_on =
+      Ecto.Query.dynamic(
+        [sub, ..., through],
+        field(through, ^rel.destination_attribute_on_join_resource) ==
+          field(sub, ^rel.destination_attribute)
+      )
+      |> AshSql.DistributionKey.join_on(
+        sql_behaviour,
+        {rel.through, :last},
+        {rel.destination, :first}
+      )
+
+    source_condition =
+      Ecto.Query.dynamic(
+        field(parent_as(^source_binding), ^rel.source_attribute) ==
+          field(as(^through_binding), ^rel.source_attribute_on_join_resource)
+      )
+      |> AshSql.DistributionKey.join_on(
+        sql_behaviour,
+        {rel.source, {:parent_as, source_binding}},
+        {rel.through, {:as, through_binding}}
+      )
 
     subquery =
       from(sub in subquery,
         join: through in ^through,
-        as: ^query.__ash_bindings__.current,
-        on:
-          field(
-            through,
-            ^rel.destination_attribute_on_join_resource
-          ) ==
-            field(sub, ^rel.destination_attribute),
+        as: ^through_binding,
+        on: ^through_on,
         select_merge: map(through, ^[field]),
         group_by:
           field(
@@ -823,15 +827,7 @@ defmodule AshSql.Aggregate.Lateral do
             through,
             ^rel.source_attribute_on_join_resource
           ),
-        where:
-          field(
-            parent_as(^source_binding),
-            ^rel.source_attribute
-          ) ==
-            field(
-              through,
-              ^rel.source_attribute_on_join_resource
-            )
+        where: ^source_condition
       )
 
     AshSql.Join.set_join_prefix(
@@ -855,15 +851,21 @@ defmodule AshSql.Aggregate.Lateral do
     from(row in subquery,
       group_by: field(row, ^field),
       select_merge: %{^field => field(row, ^field)},
-      where:
-        field(
-          parent_as(^source_binding),
-          ^rel.source_attribute
-        ) ==
-          field(
-            as(^base_binding),
-            ^rel.destination_attribute
-          )
+      where: ^correlation(subquery, rel, source_binding, base_binding)
+    )
+  end
+
+  # `parent.source_attribute == destination.destination_attribute`, plus the
+  # distribution key equality when both resources declare one.
+  defp correlation(subquery, rel, source_binding, base_binding) do
+    Ecto.Query.dynamic(
+      field(parent_as(^source_binding), ^rel.source_attribute) ==
+        field(as(^base_binding), ^rel.destination_attribute)
+    )
+    |> AshSql.DistributionKey.join_on(
+      subquery.__ash_bindings__.sql_behaviour,
+      {rel.source, {:parent_as, source_binding}},
+      {rel.destination, {:as, base_binding}}
     )
   end
 

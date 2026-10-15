@@ -3378,15 +3378,31 @@ defmodule AshSql.Expr do
               {:ok, through} =
                 AshSql.Join.related_subquery(through_relationship, query)
 
+              sql_behaviour = query.__ash_bindings__.sql_behaviour
+
+              through_on =
+                Ecto.Query.dynamic(
+                  [destination, ..., through],
+                  field(through, ^first_relationship.destination_attribute_on_join_resource) ==
+                    field(destination, ^first_relationship.destination_attribute) and
+                    field(parent_as(^source_ref), ^first_relationship.source_attribute) ==
+                      field(through, ^first_relationship.source_attribute_on_join_resource)
+                )
+                |> AshSql.DistributionKey.join_on(
+                  sql_behaviour,
+                  {first_relationship.through, :last},
+                  {first_relationship.destination, :first}
+                )
+                |> AshSql.DistributionKey.join_on(
+                  sql_behaviour,
+                  {first_relationship.source, {:parent_as, source_ref}},
+                  {first_relationship.through, :last}
+                )
+
               Ecto.Query.from(destination in subquery,
                 join: through in ^through,
                 as: ^:join_source,
-                on:
-                  field(through, ^first_relationship.destination_attribute_on_join_resource) ==
-                    field(destination, ^first_relationship.destination_attribute),
-                on:
-                  field(parent_as(^source_ref), ^first_relationship.source_attribute) ==
-                    field(through, ^first_relationship.source_attribute_on_join_resource)
+                on: ^through_on
               )
 
             true ->
@@ -3401,11 +3417,19 @@ defmodule AshSql.Expr do
                   bindings
                 )
 
-              Ecto.Query.from(destination in subquery,
-                where:
+              condition =
+                Ecto.Query.dynamic(
+                  [destination],
                   field(parent_as(^source_ref), ^first_relationship.source_attribute) ==
                     field(destination, ^first_relationship.destination_attribute)
-              )
+                )
+                |> AshSql.DistributionKey.join_on(
+                  query.__ash_bindings__.sql_behaviour,
+                  {first_relationship.source, {:parent_as, source_ref}},
+                  {first_relationship.destination, :first}
+                )
+
+              Ecto.Query.from(destination in subquery, where: ^condition)
           end
         end
       )

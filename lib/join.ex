@@ -1142,34 +1142,53 @@ defmodule AshSql.Join do
             end
           )
 
+        through_binding = initial_ash_bindings.current
+        sql_behaviour = query.__ash_bindings__.sql_behaviour
+
+        through_on =
+          Ecto.Query.dynamic(
+            [..., through],
+            field(as(^current_binding), ^relationship.source_attribute) ==
+              field(through, ^relationship.source_attribute_on_join_resource)
+          )
+          |> AshSql.DistributionKey.join_on(
+            sql_behaviour,
+            {relationship.source, {:as, current_binding}},
+            {relationship.through, :last}
+          )
+
+        destination_on =
+          Ecto.Query.dynamic(
+            [..., destination],
+            field(destination, ^relationship.destination_attribute) ==
+              field(as(^through_binding), ^relationship.destination_attribute_on_join_resource)
+          )
+          |> AshSql.DistributionKey.join_on(
+            sql_behaviour,
+            {relationship.through, {:as, through_binding}},
+            {relationship.destination, :last}
+          )
+
         query =
           case kind do
             :inner ->
               from(_ in query,
                 join: through in ^relationship_through,
-                as: ^initial_ash_bindings.current,
-                on:
-                  field(as(^current_binding), ^relationship.source_attribute) ==
-                    field(through, ^relationship.source_attribute_on_join_resource),
+                as: ^through_binding,
+                on: ^through_on,
                 join: destination in ^relationship_destination,
-                as: ^(initial_ash_bindings.current + 1),
-                on:
-                  field(destination, ^relationship.destination_attribute) ==
-                    field(through, ^relationship.destination_attribute_on_join_resource)
+                as: ^(through_binding + 1),
+                on: ^destination_on
               )
 
             _ ->
               from(_ in query,
                 left_join: through in ^relationship_through,
-                as: ^initial_ash_bindings.current,
-                on:
-                  field(as(^current_binding), ^relationship.source_attribute) ==
-                    field(through, ^relationship.source_attribute_on_join_resource),
+                as: ^through_binding,
+                on: ^through_on,
                 left_join: destination in ^relationship_destination,
-                as: ^(initial_ash_bindings.current + 1),
-                on:
-                  field(destination, ^relationship.destination_attribute) ==
-                    field(through, ^relationship.destination_attribute_on_join_resource)
+                as: ^(through_binding + 1),
+                on: ^destination_on
               )
           end
 
@@ -1284,25 +1303,38 @@ defmodule AshSql.Join do
                      query.__ash_bindings__
                    )
 
-                 Ecto.Query.from(destination in subquery,
-                   where:
+                 condition =
+                   Ecto.Query.dynamic(
+                     [destination],
                      field(parent_as(^source_ref), ^relationship.source_attribute) ==
                        field(destination, ^relationship.destination_attribute)
-                 )
+                   )
+                   |> AshSql.DistributionKey.join_on(
+                     query.__ash_bindings__.sql_behaviour,
+                     {relationship.source, {:parent_as, source_ref}},
+                     {relationship.destination, :first}
+                   )
+
+                 Ecto.Query.from(destination in subquery, where: ^condition)
                end
              end,
              on_parent_expr: fn subquery ->
                if Map.get(relationship, :no_attributes?) do
                  subquery
                else
-                 from(row in subquery,
-                   where:
+                 condition =
+                   Ecto.Query.dynamic(
+                     [row],
                      field(parent_as(^current_binding), ^relationship.source_attribute) ==
-                       field(
-                         row,
-                         ^relationship.destination_attribute
-                       )
-                 )
+                       field(row, ^relationship.destination_attribute)
+                   )
+                   |> AshSql.DistributionKey.join_on(
+                     query.__ash_bindings__.sql_behaviour,
+                     {relationship.source, {:parent_as, current_binding}},
+                     {relationship.destination, :first}
+                   )
+
+                 from(row in subquery, where: ^condition)
                end
              end
            ) do
@@ -1310,6 +1342,18 @@ defmodule AshSql.Join do
           {:error, error}
 
         {:ok, relationship_destination} ->
+          join_on =
+            Ecto.Query.dynamic(
+              [..., destination],
+              field(as(^current_binding), ^relationship.source_attribute) ==
+                field(destination, ^relationship.destination_attribute)
+            )
+            |> AshSql.DistributionKey.join_on(
+              query.__ash_bindings__.sql_behaviour,
+              {relationship.source, {:as, current_binding}},
+              {relationship.destination, :last}
+            )
+
           query =
             case {kind, Map.get(relationship, :no_attributes?, false),
                   require_lateral? ||
@@ -1334,12 +1378,7 @@ defmodule AshSql.Join do
                 from(_ in query,
                   join: destination in ^relationship_destination,
                   as: ^initial_ash_bindings.current,
-                  on:
-                    field(as(^current_binding), ^relationship.source_attribute) ==
-                      field(
-                        destination,
-                        ^relationship.destination_attribute
-                      )
+                  on: ^join_on
                 )
 
               {:inner, false, true} ->
@@ -1367,12 +1406,7 @@ defmodule AshSql.Join do
                 from(_ in query,
                   left_join: destination in ^relationship_destination,
                   as: ^initial_ash_bindings.current,
-                  on:
-                    field(as(^current_binding), ^relationship.source_attribute) ==
-                      field(
-                        destination,
-                        ^relationship.destination_attribute
-                      )
+                  on: ^join_on
                 )
 
               {:left, false, true} ->
@@ -1479,29 +1513,40 @@ defmodule AshSql.Join do
              sort?: sort?,
              apply_filter?: apply_filter,
              on_subquery: fn subquery ->
+               sql_behaviour = query.__ash_bindings__.sql_behaviour
+
+               through_on =
+                 Ecto.Query.dynamic(
+                   [destination, ..., through],
+                   field(through, ^relationship.destination_attribute_on_join_resource) ==
+                     field(destination, ^relationship.destination_attribute) and
+                     field(parent_as(^current_binding), ^relationship.source_attribute) ==
+                       field(through, ^relationship.source_attribute_on_join_resource)
+                 )
+                 |> AshSql.DistributionKey.join_on(
+                   sql_behaviour,
+                   {relationship.through, :last},
+                   {relationship.destination, :first}
+                 )
+                 |> AshSql.DistributionKey.join_on(
+                   sql_behaviour,
+                   {relationship.source, {:parent_as, current_binding}},
+                   {relationship.through, :last}
+                 )
+
                case kind do
                  :inner ->
                    from(destination in subquery,
                      join: through in ^relationship_through,
                      as: ^initial_ash_bindings.current,
-                     on:
-                       field(through, ^relationship.destination_attribute_on_join_resource) ==
-                         field(destination, ^relationship.destination_attribute),
-                     on:
-                       field(parent_as(^current_binding), ^relationship.source_attribute) ==
-                         field(through, ^relationship.source_attribute_on_join_resource)
+                     on: ^through_on
                    )
 
                  _ ->
                    from(destination in subquery,
                      left_join: through in ^relationship_through,
                      as: ^initial_ash_bindings.current,
-                     on:
-                       field(through, ^relationship.destination_attribute_on_join_resource) ==
-                         field(destination, ^relationship.destination_attribute),
-                     on:
-                       field(parent_as(^current_binding), ^relationship.source_attribute) ==
-                         field(through, ^relationship.source_attribute_on_join_resource)
+                     on: ^through_on
                    )
                end
              end,
