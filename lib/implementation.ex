@@ -86,6 +86,21 @@ defmodule AshSql.Implementation do
   """
   @callback aggregate_strategy(Ash.Resource.t()) :: :lateral | :grouped
 
+  @doc """
+  The attribute that distributed databases (e.g. Citus) shard the resource's table by, or `nil`.
+
+  When both resources on either side of a relationship join declare one, AshSql adds
+  `source.key == destination.key` to the join condition (and, for `many_to_many`
+  relationships, to both the source/through and through/destination joins). Distributed
+  databases need that equality on every join between sharded tables, and it lets them
+  push the join down to a single shard.
+
+  Only the `:lateral` aggregate strategy applies the key. Relationships with
+  `no_attributes?: true` and manual relationships define their own join condition and
+  are left alone.
+  """
+  @callback distribution_key(Ash.Resource.t()) :: atom | nil
+
   @optional_callbacks determine_types: 3
 
   defmacro __using__(_) do
@@ -108,6 +123,7 @@ defmodule AshSql.Implementation do
       def equals_any?, do: true
       def storage_type(_, _), do: nil
       def aggregate_strategy(_resource), do: :lateral
+      def distribution_key(_resource), do: nil
 
       # The cast type to use when casting a bare column reference, as opposed
       # to a value or a computed expression. Implementations can use this to
@@ -144,6 +160,7 @@ defmodule AshSql.Implementation do
                      require_extension_for_citext: 0,
                      simple_join_first_aggregates: 1,
                      aggregate_strategy: 1,
+                     distribution_key: 1,
                      type_expr: 2,
                      ref_cast_type: 1,
                      storage_type: 2,
